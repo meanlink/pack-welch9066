@@ -4,7 +4,7 @@ from sqlalchemy import select
 from redis import Redis
 from src.config.database import Session
 from src.config.settings import REDIS_URL
-from src.models import Job, Dataset, Report
+from src.models import Job, Dataset, Report, JobSnapshot
 from src.services.business import analyze
 from src.services.reports import deliver
 from src.services.audit import record
@@ -15,11 +15,13 @@ def execute(job_id):
         if not j or j.status!='queued':return
         j.status='running'; db.commit()
         try:
-            d=db.get(Dataset,j.dataset_id)
-            result=analyze(d.records,j.params)
+            # 优先使用排队时冻结的有效片段；补传、更正和撤回不得改变该次比较。
+            snapshot=db.get(JobSnapshot,job_id)
+            records=snapshot.records if snapshot else db.get(Dataset,j.dataset_id).records
+            result=analyze(records,j.params)
             json.dumps(result,allow_nan=False)
             j.result=result;j.status='completed';j.finished_at=time.time()
-            record(db,'worker','job.completed',{'id':j.id})
+            record(db,'worker','job.completed',{'id':j.id,'snapshot':snapshot.checksum if snapshot else None})
         except Exception as e:
             logging.exception('Analysis failed')
             j.status='failed';j.error=str(e)[:990];j.finished_at=time.time()

@@ -9,6 +9,7 @@ from src.config.settings import REDIS_URL
 from src.middlewares.requests import RequestControl
 from src.routes import auth, datasets, jobs, reports
 from src.controllers import catalog
+from src.services.intake import MergeRejected
 from migrations.initial import migrate
 @asynccontextmanager
 async def lifespan(app):
@@ -21,6 +22,10 @@ async def lifespan(app):
     yield
 app=FastAPI(title='业务分析工作室',lifespan=lifespan)
 app.add_middleware(RequestControl)
+@app.exception_handler(MergeRejected)
+async def merge_rejected(request:Request,exc:MergeRejected):
+    # 整批拒收时把冲突行与计数一并返回，便于数据接入页核对。
+    return JSONResponse({'detail':exc.detail,'counts':exc.counts,'details':exc.details},status_code=exc.status_code)
 @app.exception_handler(Exception)
 async def unhandled(request:Request,exc:Exception):
     logging.exception('Request failed')
